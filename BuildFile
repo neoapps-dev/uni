@@ -1,0 +1,18 @@
+# BuildIt File
+
+pack:lignux {
+#!/bin/bash
+echo Packaging uni...
+cp src/main.sh ./uni
+chmod +x uni
+echo Packaged uni into `./uni`.
+}
+
+install:lignux {
+#!/bin/bash
+echo Installing uni...
+cp src/main.sh ./uni
+chmod +x uni
+sudo cp ./uni /usr/bin/uni
+echo Installed uni to `/usr/bin/uni`.
+}
