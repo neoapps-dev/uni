@@ -115,7 +115,6 @@ extract_with_progress() {
 show_progress() {
     local current=$1
     local total=$2
-
     local width=50
     local percentage=$((current * 100 / total))
     local filled=$((width * current / total))
@@ -166,8 +165,6 @@ install_dependencies() {
         for dep in "${dependencies[@]}"; do
             if ! jq -e ".installed[\"$dep\"]" "${UNI_CONFIG}" >/dev/null; then
                 install "$dep"
-            else
-                print_info "Dependency $dep is already installed"
             fi
         done
     fi
@@ -203,22 +200,22 @@ install() {
             cd "$temp_dir"
             
             print_info "Downloading package..."
-                if ! progress_git_clone "$package_repo" "uni-v${version}" "." 2>/dev/null; then
-        print_error "Version ${version} not found"
-        rm -rf "$temp_dir"
-        exit 1
-    fi
-    
-    if [ ! -f "package.uni" ]; then
-        print_error "package.uni not found in repository"
-        rm -rf "$temp_dir"
-        exit 1
-    fi
-    
-    print_info "Installing..."
-    sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
-    sudo extract_with_progress "package.uni" "${UNI_PACKAGES}/${package_name}"
-    sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
+            if ! progress_git_clone "$package_repo" "uni-v${version}" "." 2>/dev/null; then
+                print_error "Version ${version} not found"
+                rm -rf "$temp_dir"
+                exit 1
+            fi
+            
+            if [ ! -f "package.uni" ]; then
+                print_error "package.uni not found in repository"
+                rm -rf "$temp_dir"
+                exit 1
+            fi
+            
+            print_info "Installing..."
+            sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
+            sudo extract_with_progress "package.uni" "${UNI_PACKAGES}/${package_name}"
+            sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
             
             sudo jq --arg name "$package_name" \
                 --arg repo "$package_repo" \
@@ -454,7 +451,7 @@ ${BOLD}PACKAGE REPOSITORY FORMAT:${NC}
         \"repo\": \"https://github.com/user/package.git\",
         \"name\": \"package-name\",
         \"version\": \"1.0.0\",
-        \"maintainer\": \"That person\",
+        \"maintainer\": \"Your name\",
         \"description\": \"Package description\",
         \"license\": \"MIT\",
         \"dependencies\": [],
@@ -462,9 +459,9 @@ ${BOLD}PACKAGE REPOSITORY FORMAT:${NC}
     }
 
 ${BOLD}EXAMPLES:${NC}
-    uni -s text-editor          Search for text editors
-    uni -i nano                 Install nano
-    uni -i nano 2.0.1          Install specific version of nano
+    uni -s dev                  Search for development tools
+    uni -i hello-world          Install hello-world
+    uni -i hello-world 2.0.1    Install specific version of hello-world
     uni -AR https://repo.git    Add a new package repository
     uni -U                      Check and upgrade packages
     uni -l                      List installed packages
