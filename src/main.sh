@@ -39,6 +39,21 @@ print_error() { echo -e "${RED}✗ $1${NC}" >&2; }
 print_info() { echo -e "${BLUE}ℹ  $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠  $1${NC}"; }
 
+show_progress() {
+    local current=$1
+    local total=$2
+
+    local width=50
+    local percentage=$((current * 100 / total))
+    local filled=$((width * current / total))
+    local empty=$((width - filled))
+    
+    printf "\r$3: ["
+    printf "%${filled}s" '' | tr ' ' '='
+    printf "%${empty}s" '' | tr ' ' ' '
+    printf "] %3d%%" $percentage
+}
+
 download_with_progress() {
     local url="$1"
     local output="$2"
