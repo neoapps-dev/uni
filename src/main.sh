@@ -88,7 +88,7 @@ progress_git_clone() {
     echo
 }
 
-extract_with_progress() {
+extract_progress() {
     local archive="$1"
     local destination="$2"
     local total_files=$(tar tzf "$archive" 2>/dev/null | wc -l)
@@ -214,7 +214,7 @@ install() {
             
             print_info "Installing..."
             sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
-            sudo extract_with_progress "package.uni" "${UNI_PACKAGES}/${package_name}"
+            extract_progress "package.uni" "${UNI_PACKAGES}/${package_name}"
             sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
             
             sudo jq --arg name "$package_name" \
