@@ -172,7 +172,6 @@ search() {
                     version=$(jq -r '.version // "unknown"' "$pkg")
                     maintainer=$(jq -r '.maintainer // "unknown"' "$pkg")
                     description=$(jq -r '.description // "No description"' "$pkg")
-                    # Truncate tags if too long
                     tags_display="${tags:0:20}"
                     [ ${#tags} -gt 20 ] && tags_display="${tags_display}..."
                     
@@ -246,7 +245,7 @@ install() {
             cd "$temp_dir"
             
             print_info "Downloading package..."
-            git clone --quiet "$package_repo" .
+            git clone --branch uni-v$version --single-branch --quiet "$package_repo" .
             
             if [ ! -f "package.uni" ]; then
                 print_error "package.uni not found in repository"
