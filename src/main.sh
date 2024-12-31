@@ -39,6 +39,79 @@ print_error() { echo -e "${RED}✗ $1${NC}" >&2; }
 print_info() { echo -e "${BLUE}ℹ  $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠  $1${NC}"; }
 
+show_spinner() {
+    local pid=$1
+    local message=$2
+    local spin='-\|/'
+    local i=0
+    
+    while kill -0 $pid 2>/dev/null; do
+        i=$(( (i+1) %4 ))
+        printf "\r${message} ${spin:$i:1}"
+        sleep .1
+    done
+    printf "\r"
+}
+
+progress_git_clone() {
+    local repo="$1"
+    local branch="$2"
+    local dir="$3"
+    local progress_file=$(mktemp)
+    
+    (GIT_PROGRESS_FILE="$progress_file" git clone --progress --branch "$branch" --single-branch "$repo" "$dir" 2>&1 | tee "$progress_file") &
+    local pid=$!
+    
+    local total_objects=0
+    local received_objects=0
+    local resolving_deltas=0
+    
+    while kill -0 $pid 2>/dev/null; do
+        if [[ -f "$progress_file" ]]; then
+            while IFS= read -r line; do
+                if [[ $line =~ Counting\ objects:\ ([0-9]+) ]]; then
+                    total_objects="${BASH_REMATCH[1]}"
+                elif [[ $line =~ Receiving\ objects:\ +([0-9]+)% ]]; then
+                    received_objects="${BASH_REMATCH[1]}"
+                    printf "\rDownloading: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((received_objects/2))))" "$received_objects"
+                elif [[ $line =~ Resolving\ deltas:\ +([0-9]+)% ]]; then
+                    resolving_deltas="${BASH_REMATCH[1]}"
+                    printf "\rInstalling: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((resolving_deltas/2))))" "$resolving_deltas"
+                fi
+            done < "$progress_file"
+        fi
+        sleep 0.1
+    done
+    
+    wait $pid
+    rm -f "$progress_file"
+    echo
+}
+
+extract_with_progress() {
+    local archive="$1"
+    local destination="$2"
+    local total_files=$(tar tzf "$archive" 2>/dev/null | wc -l)
+    local current_file=0
+    local progress_file=$(mktemp)
+    
+    (tar xzf "$archive" -C "$destination" --checkpoint=1 --checkpoint-action=exec='echo $TAR_CHECKPOINT > "'$progress_file'"' 2>/dev/null) &
+    local pid=$!
+    
+    while kill -0 $pid 2>/dev/null; do
+        if [[ -f "$progress_file" ]]; then
+            current_file=$(cat "$progress_file")
+            local percentage=$((current_file * 100 / total_files))
+            printf "\rExtracting: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((percentage/2))))" "$percentage"
+        fi
+        sleep 0.1
+    done
+    
+    wait $pid
+    rm -f "$progress_file"
+    echo
+}
+
 show_progress() {
     local current=$1
     local total=$2
@@ -130,22 +203,22 @@ install() {
             cd "$temp_dir"
             
             print_info "Downloading package..."
-            if ! git clone --branch "uni-v${version}" --single-branch --quiet "$package_repo" . 2>/dev/null; then
-                print_error "Version ${version} not found"
-                rm -rf "$temp_dir"
-                exit 1
-            fi
-            
-            if [ ! -f "package.uni" ]; then
-                print_error "package.uni not found in repository"
-                rm -rf "$temp_dir"
-                exit 1
-            fi
-            
-            print_info "Installing..."
-            sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
-            sudo tar xzf package.uni -C "${UNI_PACKAGES}/${package_name}" 2>/dev/null
-            sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
+                if ! progress_git_clone "$package_repo" "uni-v${version}" "." 2>/dev/null; then
+        print_error "Version ${version} not found"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    if [ ! -f "package.uni" ]; then
+        print_error "package.uni not found in repository"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    print_info "Installing..."
+    sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
+    sudo extract_with_progress "package.uni" "${UNI_PACKAGES}/${package_name}"
+    sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
             
             sudo jq --arg name "$package_name" \
                 --arg repo "$package_repo" \
