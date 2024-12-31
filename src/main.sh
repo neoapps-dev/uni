@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# uni - The Universal Package Manager for GNU/Linux
-# Created by NEOAPPS
-# License: GNU GPL-v3
-
 set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,7 +29,7 @@ check_dependencies() {
     done
     
     if [ ${#missing[@]} -ne 0 ]; then
-        echo -e "${RED}Error: Missing required dependencies: ${missing[*]}${NC}"
+        echo -e "${RED}✗ Missing required dependencies: ${missing[*]}${NC}"
         exit 1
     fi
 }
@@ -43,38 +39,225 @@ print_error() { echo -e "${RED}✗ $1${NC}" >&2; }
 print_info() { echo -e "${BLUE}ℹ  $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠  $1${NC}"; }
 
-show_progress() {
-    local current=$1
-    local total=$2
-
-    local width=50
-    local percentage=$((current * 100 / total))
-    local filled=$((width * current / total))
-    local empty=$((width - filled))
-    
-    printf "\r$3: ["
-    printf "%${filled}s" '' | tr ' ' '='
-    printf "%${empty}s" '' | tr ' ' ' '
-    printf "] %3d%%" $percentage
-}
-
-howtoaddtopath() {
-    echo To add every installed uni Package to PATH,
-    echo Use this command then restart your shell:
-    echo 'echo export PATH=$PATH:/uni/bin/ > ~/.profile'
-}
-
 download_with_progress() {
     local url="$1"
     local output="$2"
-    curl --progress-bar -L "$url" -o "$output" 2>&1 | stdbuf -o0 tr '\r' '\n' | \
-    while IFS= read -r line; do
-        if [[ $line =~ [0-9]+\.[0-9]% ]]; then
-            percent=${line%\%*}
-            show_progress ${percent%.*} 100 "Progress"
+    local temp_file=$(mktemp)
+    local total_size=0
+    local downloaded=0
+    
+    total_size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+    [ -z "$total_size" ] && total_size=0
+    
+    curl -L "$url" -o "$output" 2>"$temp_file" &
+    local pid=$!
+    
+    while kill -0 $pid 2>/dev/null; do
+        if [ -f "$output" ]; then
+            downloaded=$(stat -f%z "$output" 2>/dev/null || stat -c%s "$output" 2>/dev/null)
+            if [ $total_size -gt 0 ]; then
+                local percentage=$((downloaded * 100 / total_size))
+                printf "\rDownloading: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((percentage / 2))))" "$percentage"
+            else
+                printf "\rDownloading: %d bytes" "$downloaded"
+            fi
+        fi
+        sleep 0.1
+    done
+    wait $pid
+    rm -f "$temp_file"
+    echo
+}
+
+install_dependencies() {
+    local pkg_metadata="$1"
+    local dependencies=($(jq -r '.dependencies[]?' "$pkg_metadata"))
+    
+    if [ ${#dependencies[@]} -gt 0 ]; then
+        print_info "Installing dependencies: ${dependencies[*]}"
+        for dep in "${dependencies[@]}"; do
+            if ! jq -e ".installed[\"$dep\"]" "${UNI_CONFIG}" >/dev/null; then
+                install "$dep"
+            else
+                print_info "Dependency $dep is already installed"
+            fi
+        done
+    fi
+}
+
+install() {
+    if [ -z "$1" ]; then
+        print_error "Usage: uni install <package-name> [version]"
+        exit 1
+    fi
+    
+    local package_name="$1"
+    local requested_version="$2"
+    local found=false
+    
+    for repo in "${UNI_REPOS}"/*; do
+        if [ -f "${repo}/${package_name}.json" ]; then
+            found=true
+            local metadata="${repo}/${package_name}.json"
+            local package_repo=$(jq -r .repo "$metadata")
+            local version=$(jq -r .version "$metadata")
+            local maintainer=$(jq -r .maintainer "$metadata")
+            
+            if [ ! -z "$requested_version" ]; then
+                version="$requested_version"
+            fi
+            
+            print_info "Installing ${BOLD}${package_name}${NC} version ${BOLD}${version}${NC} by ${maintainer}"
+            
+            install_dependencies "$metadata"
+            
+            local temp_dir=$(mktemp -d)
+            cd "$temp_dir"
+            
+            print_info "Downloading package..."
+            if ! git clone --branch "uni-v${version}" --single-branch --quiet "$package_repo" . 2>/dev/null; then
+                print_error "Version ${version} not found"
+                rm -rf "$temp_dir"
+                exit 1
+            fi
+            
+            if [ ! -f "package.uni" ]; then
+                print_error "package.uni not found in repository"
+                rm -rf "$temp_dir"
+                exit 1
+            fi
+            
+            print_info "Installing..."
+            sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
+            sudo tar xzf package.uni -C "${UNI_PACKAGES}/${package_name}" 2>/dev/null
+            sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
+            
+            sudo jq --arg name "$package_name" \
+                --arg repo "$package_repo" \
+                --arg version "$version" \
+                --arg maintainer "$maintainer" \
+                '.installed[$name] = {
+                    "repo": $repo,
+                    "version": $version,
+                    "maintainer": $maintainer,
+                    "installed_at": now
+                }' "${UNI_CONFIG}" > "${UNI_CONFIG}.tmp"
+            sudo mv "${UNI_CONFIG}.tmp" "${UNI_CONFIG}"
+            
+            rm -rf "$temp_dir"
+            print_success "Package ${package_name} installed successfully"
+            break
         fi
     done
-    echo
+    
+    if [ "$found" = false ]; then
+        print_error "Package ${package_name} not found in any repository"
+        exit 1
+    fi
+}
+
+remove() {
+    if [ -z "$1" ]; then
+        print_error "Usage: uni remove <package-name>"
+        exit 1
+    fi
+    
+    local package_name="$1"
+    
+    if [ -d "${UNI_PACKAGES}/${package_name}" ]; then
+        print_info "Removing package ${package_name}..."
+        
+        sudo rm -f "${UNI_PATH}/${package_name}"
+        sudo rm -rf "${UNI_PACKAGES}/${package_name}"
+        
+        sudo jq "del(.installed[\"$package_name\"])" "${UNI_CONFIG}" > "${UNI_CONFIG}.tmp"
+        sudo mv "${UNI_CONFIG}.tmp" "${UNI_CONFIG}"
+        
+        print_success "Package ${package_name} removed successfully"
+    else
+        print_error "Package ${package_name} is not installed"
+        exit 1
+    fi
+}
+
+search() {
+    if [ -z "$1" ]; then
+        print_error "Usage: uni search <package-name/tag>"
+        exit 1
+    fi
+    
+    search_term="$1"
+    found=false
+    
+    echo -e "${BOLD}Searching for packages matching '$search_term'...${NC}\n"
+    printf "${BOLD}%-20s %-10s %-20s %-30s %-20s${NC}\n" "NAME" "VERSION" "MAINTAINER" "DESCRIPTION" "TAGS"
+    echo "------------------------------------------------------------------------------------------------"
+    
+    for repo in "${UNI_REPOS}"/*; do
+        for pkg in "$repo"/*.json; do
+            if [ -f "$pkg" ]; then
+                name=$(basename "$pkg" .json)
+                tags=$(jq -r '.tags | join(", ") // ""' "$pkg")
+                
+                if [[ "$name" =~ .*"$search_term".* ]] || \
+                   [[ "$tags" =~ .*"$search_term".* ]]; then
+                    found=true
+                    version=$(jq -r '.version // "unknown"' "$pkg")
+                    maintainer=$(jq -r '.maintainer // "unknown"' "$pkg")
+                    description=$(jq -r '.description // "No description"' "$pkg")
+                    tags_display="${tags:0:20}"
+                    [ ${#tags} -gt 20 ] && tags_display="${tags_display}..."
+                    
+                    printf "%-20s %-10s %-20s %-30s %-20s\n" \
+                        "$name" \
+                        "$version" \
+                        "$maintainer" \
+                        "${description:0:30}" \
+                        "$tags_display"
+                fi
+            fi
+        done
+    done
+    
+    if [ "$found" = false ]; then
+        print_warning "No packages found matching '$search_term'"
+        print_info "Try searching by package name or tags (e.g., 'editor', 'development', 'cli')"
+    fi
+}
+
+add_repo() {
+    if [ -z "$1" ]; then
+        print_error "Usage: uni add-repo <repository-url>"
+        exit 1
+    fi
+    
+    repo_url="$1"
+    repo_name=$(basename "$repo_url" .git)
+    
+    print_info "Adding repository: $repo_name"
+    
+    if [ -d "${UNI_REPOS}/${repo_name}" ]; then
+        print_info "Repository exists, updating..."
+        (cd "${UNI_REPOS}/${repo_name}" && git pull --quiet)
+    else
+        print_info "Downloading repository..."
+        temp_dir=$(mktemp -d)
+        git clone --quiet "$repo_url" "$temp_dir"
+        sudo mv "$temp_dir" "${UNI_REPOS}/${repo_name}"
+    fi
+    
+    if ! jq -e ".repos | contains([\"$repo_url\"])" "${UNI_CONFIG}" > /dev/null; then
+        sudo jq --arg repo "$repo_url" '.repos += [$repo]' "${UNI_CONFIG}" > "${UNI_CONFIG}.tmp"
+        sudo mv "${UNI_CONFIG}.tmp" "${UNI_CONFIG}"
+        print_success "Repository added successfully"
+    else
+        print_info "Repository already exists"
+    fi
+}
+
+initrepo() {
+    print_info "Adding uni-packages to UNI_REPOS..."
+    add_repo "https://github.com/neoapps-dev/uni-packages.git"
 }
 
 update() {
@@ -88,19 +271,14 @@ update() {
     fi
     
     for repo in "${UNI_REPOS}"/*; do
-            repo_name=$(basename "$repo")
-            ((count += 1))
-            print_info "[$count/$total] Updating $repo_name"
-            cd "$repo" && git pull --quiet
-            show_progress $count $total $repo_name
+        repo_name=$(basename "$repo")
+        ((count += 1))
+        print_info "[$count/$total] Updating $repo_name"
+        cd "$repo" && git pull --quiet
+        show_progress $count $total $repo_name
     done
     echo
     print_success "All repositories updated successfully"
-}
-
-initrepo() {
-    print_info "Adding uni-packages to UNI_REPOS..."
-    add_repo "https://github.com/neoapps-dev/uni-packages.git"
 }
 
 upgrade() {
@@ -147,165 +325,6 @@ upgrade() {
     fi
 }
 
-search() {
-    if [ -z "$1" ]; then
-        print_error "Usage: uni search|--search|-s <package-name/tag>"
-        exit 1
-    fi
-    
-    search_term="$1"
-    found=false
-    
-    echo -e "${BOLD}Searching for packages matching '$search_term'...${NC}\n"
-    printf "${BOLD}%-20s %-10s %-20s %-30s %-20s${NC}\n" "NAME" "VERSION" "MAINTAINER" "DESCRIPTION" "TAGS"
-    echo "------------------------------------------------------------------------------------------------"
-    
-    for repo in "${UNI_REPOS}"/*; do
-        for pkg in "$repo"/*.json; do
-            if [ -f "$pkg" ]; then
-                name=$(basename "$pkg" .json)
-                tags=$(jq -r '.tags | join(", ") // ""' "$pkg")
-                
-                if [[ "$name" =~ .*"$search_term".* ]] || \
-                   [[ "$tags" =~ .*"$search_term".* ]]; then
-                    found=true
-                    version=$(jq -r '.version // "unknown"' "$pkg")
-                    maintainer=$(jq -r '.maintainer // "unknown"' "$pkg")
-                    description=$(jq -r '.description // "No description"' "$pkg")
-                    tags_display="${tags:0:20}"
-                    [ ${#tags} -gt 20 ] && tags_display="${tags_display}..."
-                    
-                    printf "%-20s %-10s %-20s %-30s %-20s\n" \
-                        "$name" \
-                        "$version" \
-                        "$maintainer" \
-                        "${description:0:30}" \
-                        "$tags_display"
-                fi
-            fi
-        done
-    done
-    
-    if [ "$found" = false ]; then
-        print_warning "No packages found matching '$search_term'"
-        print_info "Try searching by package name or tags (e.g., 'editor', 'development', 'cli')"
-    fi
-}
-
-add_repo() {
-    if [ -z "$1" ]; then
-        print_error "Usage: uni add-repo|--add-repo|-AR|-a <repository-url>"
-        exit 1
-    fi
-    
-    repo_url="$1"
-    repo_name=$(basename "$repo_url" .git)
-    
-    print_info "Adding repository: $repo_name"
-    
-    if [ -d "${UNI_REPOS}/${repo_name}" ]; then
-        print_info "Repository exists, updating..."
-        (cd "${UNI_REPOS}/${repo_name}" && git pull --quiet)
-    else
-        print_info "Downloading repository..."
-        temp_dir=$(mktemp -d)
-        git clone --quiet "$repo_url" "$temp_dir"
-        sudo mv "$temp_dir" "${UNI_REPOS}/${repo_name}"
-    fi
-    
-    if ! jq -e ".repos | contains([\"$repo_url\"])" "${UNI_CONFIG}" > /dev/null; then
-        sudo jq --arg repo "$repo_url" '.repos += [$repo]' "${UNI_CONFIG}" > "${UNI_CONFIG}.tmp"
-        sudo mv "${UNI_CONFIG}.tmp" "${UNI_CONFIG}"
-        print_success "Repository added successfully"
-    else
-        print_info "Repository already exists"
-    fi
-}
-
-install() {
-    if [ -z "$1" ]; then
-        print_error "Usage: uni install|--install|-i|-S <package-name>"
-        exit 1
-    fi
-    
-    package_name="$1"
-    found=false
-    
-    for repo in "${UNI_REPOS}"/*; do
-        if [ -f "${repo}/${package_name}.json" ]; then
-            found=true
-            metadata="${repo}/${package_name}.json"
-            package_repo=$(jq -r .repo "$metadata")
-            version=$(jq -r .version "$metadata")
-            maintainer=$(jq -r .maintainer "$metadata")
-            
-            print_info "Installing ${BOLD}${package_name}${NC} version ${BOLD}${version}${NC} by ${maintainer}"
-            
-            temp_dir=$(mktemp -d)
-            cd "$temp_dir"
-            
-            print_info "Downloading package..."
-            git clone --branch uni-v$version --single-branch --quiet "$package_repo" .
-            
-            if [ ! -f "package.uni" ]; then
-                print_error "package.uni not found in repository"
-                rm -rf "$temp_dir"
-                exit 1
-            fi
-            
-            print_info "Installing..."
-            sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
-            sudo tar xzf package.uni -C "${UNI_PACKAGES}/${package_name}" 2>/dev/null
-            sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
-            
-            sudo jq --arg name "$package_name" \
-                --arg repo "$package_repo" \
-                --arg version "$version" \
-                --arg maintainer "$maintainer" \
-                '.installed[$name] = {
-                    "repo": $repo,
-                    "version": $version,
-                    "maintainer": $maintainer,
-                    "installed_at": now
-                }' "${UNI_CONFIG}" > "${UNI_CONFIG}.tmp"
-            sudo mv "${UNI_CONFIG}.tmp" "${UNI_CONFIG}"
-            
-            rm -rf "$temp_dir"
-            print_success "Package ${package_name} installed successfully"
-            break
-        fi
-    done
-    
-    if [ "$found" = false ]; then
-        print_error "Package ${package_name} not found in any repository"
-        exit 1
-    fi
-}
-
-remove() {
-    if [ -z "$1" ]; then
-        print_error "Usage: uni remove|--remove|-R <package-name>"
-        exit 1
-    fi
-    
-    package_name="$1"
-    
-    if [ -d "${UNI_PACKAGES}/${package_name}" ]; then
-        print_info "Removing package ${package_name}..."
-        
-        sudo rm -f "${UNI_PATH}"/*
-        sudo rm -rf "${UNI_PACKAGES}/${package_name}"
-        
-        sudo jq "del(.installed[\"$package_name\"])" "${UNI_CONFIG}" > "${UNI_CONFIG}.tmp"
-        sudo mv "${UNI_CONFIG}.tmp" "${UNI_CONFIG}"
-        
-        print_success "Package ${package_name} removed successfully"
-    else
-        print_error "Package ${package_name} is not installed"
-        exit 1
-    fi
-}
-
 list() {
     echo -e "${BOLD}Installed Packages:${NC}\n"
     printf "${BOLD}%-20s %-10s %-20s %-30s${NC}\n" "NAME" "VERSION" "MAINTAINER" "INSTALLED AT"
@@ -317,6 +336,12 @@ list() {
         done
 }
 
+howtoaddtopath() {
+    echo To add every installed uni Package to PATH,
+    echo Use this command then restart your shell:
+    echo 'echo export PATH=$PATH:/uni/bin/ > ~/.profile'
+}
+
 show_help() {
    echo -e "
 ${BOLD}uni${NC} - Universal Package Manager for GNU/Linux
@@ -325,16 +350,16 @@ ${BOLD}USAGE:${NC}
     uni <command> [arguments]
 
 ${BOLD}COMMANDS:${NC}
-    install, --install, -i, -S <package>    Install a package
+    install, --install, -i, -S <package> [version]  Install a package
     remove,  --remove,  -R     <package>    Remove a package
     search,  --search,  -s     <term>       Search for packages
-    add-repo,--add-repo,-AR,-a <url>        Add a package repository
-    init-repo                               Initializes the uni-packages repo.
-    -howtopath                              Shows you how to add to PATH
-    update,  --update,  -u                  Update all repositories
-    upgrade, --upgrade, -U                  Upgrade installed packages
-    list,    --list,    -l                  List installed packages
-    help,    --help,    -h                  Show this help message
+    add-repo,--add-repo,-AR,-a <url>       Add a package repository
+    init-repo                              Initializes the uni-packages repo
+    -howtopath                             Shows you how to add to PATH
+    update,  --update,  -u                 Update all repositories
+    upgrade, --upgrade, -U                 Upgrade installed packages
+    list,    --list,    -l                 List installed packages
+    help,    --help,    -h                 Show this help message
 
 ${BOLD}PACKAGE REPOSITORY FORMAT:${NC}
     {
@@ -351,6 +376,7 @@ ${BOLD}PACKAGE REPOSITORY FORMAT:${NC}
 ${BOLD}EXAMPLES:${NC}
     uni -s text-editor          Search for text editors
     uni -i nano                 Install nano
+    uni -i nano 2.0.1          Install specific version of nano
     uni -AR https://repo.git    Add a new package repository
     uni -U                      Check and upgrade packages
     uni -l                      List installed packages
@@ -362,7 +388,7 @@ For more information, visit: ${BLUE}https://github.com/neoapps-dev/uni${NC}
 check_dependencies
 case "$1" in
     "install"|"--install"|"-i"|"-S")
-        install "$2"
+        install "$2" "$3"
         ;;
     "remove"|"--remove"|"-R")
         remove "$2"
