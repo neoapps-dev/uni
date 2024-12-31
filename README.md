@@ -12,6 +12,14 @@ The Universal Package Manager for GNU/Linux
 - List installed packages with details.
 - Provides helper scripts for adding binaries to the PATH.
 
+## Installation
+Currently, uni is not available on any package manager.
+You can use `BuildIt` to package and/or install uni.
+```bash
+buildit pack       # Package uni 
+buildit install    # Install uni
+```
+
 ## Usage
 Run `uni` with the following commands:
 
@@ -20,7 +28,7 @@ Run `uni` with the following commands:
 - `remove` or `-R`: Remove a package.
 - `search` or `-s`: Search for packages by name or tags.
 - `add-repo` or `-AR`: Add a package repository.
-- `init-repo`: Initialize the default package repository.
+- `init-repo` or `-IR`: Initialize the default package repository.
 - `update` or `-u`: Update all package repositories.
 - `upgrade` or `-U`: Upgrade installed packages to the latest versions.
 - `list` or `-l`: Display all installed packages.
@@ -46,7 +54,7 @@ Ensure these are installed before using **uni**.
 
 ## Examples
 - Install a package:
-  `uni install nano`
+  `uni install hello-world`
 - Search for a text editor:
   `uni search text-editor`
 - Add a new repository:
@@ -55,6 +63,8 @@ Ensure these are installed before using **uni**.
   `uni upgrade`
 - List installed packages:
   `uni list`
+- Update all repositories:
+  `uni update`
 
 ## Contributions
 Contributions are welcome. Fork the project and create pull requests to suggest improvements or add new features.
