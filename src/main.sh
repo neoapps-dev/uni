@@ -215,6 +215,7 @@ install() {
             print_info "Installing..."
             sudo mkdir -p "${UNI_PACKAGES}/${package_name}"
             extract_progress "package.uni" "${UNI_PACKAGES}/${package_name}"
+            chmod +x "${UNI_PACKAGES}/${package_name}/${package_name}"
             sudo ln -sf "${UNI_PACKAGES}/${package_name}/${package_name}" "${UNI_PATH}/"
             
             sudo jq --arg name "$package_name" \
