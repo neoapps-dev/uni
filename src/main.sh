@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Uni - The Universal Package Manager for GNU/Linux
+# Copyright (C) 2024-present NEOAPPS.
+# Licensed under the GPLv3 License. See LICENSE file for details.
+# Documentation: https://neoapps.gitbook.io/uni
+
 set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -20,6 +25,195 @@ done
 
 [ ! -f "${UNI_CONFIG}" ] && echo '{"repos":[],"installed":{}}' | sudo tee "${UNI_CONFIG}" > /dev/null
 
+initgit() {
+git config --global core.pager ''
+git config --global color.ui true
+cat > ~/.git-clone-progress.sh << 'EOF'
+#!/bin/bash
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+function progress_bar() {
+    local width=50
+    local percentage=$1
+    local filled=$(printf "%.0f" $(echo "$percentage * $width / 100" | bc -l))
+    local empty=$((width - filled))
+    
+    printf "${BOLD}["
+    printf "%${filled}s" | tr ' ' '='
+    printf ">"
+    printf "%${empty}s" | tr ' ' ' '
+    printf "] ${percentage}%%${NC}"
+}
+
+start_time=$(date +%s)
+total_objects=0
+received_objects=0
+resolved_deltas=0
+last_percentage=0
+
+while IFS= read -r line; do
+    printf "\r\033[K"
+    
+    if [[ $line =~ remote:\ Enumerating\ objects:\ ([0-9]+) ]]; then
+        total_objects=${BASH_REMATCH[1]}
+        printf "${CYAN}🔍 Discovering repository contents...${NC}\n"
+    
+    elif [[ $line =~ remote:\ Counting\ objects ]]; then
+        printf "${MAGENTA}📊 Analyzing repository structure...${NC}\n"
+    
+    elif [[ $line =~ Receiving\ objects:\ +([0-9]+)% ]]; then
+        percentage=${BASH_REMATCH[1]}
+        received_objects=$((total_objects * percentage / 100))
+        
+        # Only update if percentage changed
+        if [ "$percentage" != "$last_percentage" ]; then
+            printf "\r${BLUE}📦 Downloading objects: "
+            progress_bar $percentage
+            printf " (${received_objects}/${total_objects})${NC}"
+            last_percentage=$percentage
+        fi
+    
+    elif [[ $line =~ Resolving\ deltas:\ +([0-9]+)% ]]; then
+        percentage=${BASH_REMATCH[1]}
+        printf "\r${YELLOW}⚡ Resolving deltas: "
+        progress_bar $percentage
+        printf "${NC}"
+    
+    elif [[ $line =~ ^Checking\ out\ files ]]; then
+        printf "\n${GREEN}📂 Setting up working directory...${NC}\n"
+    
+    elif [[ $line =~ ^remote:\ Total\ ([0-9]+)\ \(delta\ ([0-9]+)\) ]]; then
+        total_size=${BASH_REMATCH[1]}
+        deltas=${BASH_REMATCH[2]}
+        printf "${CYAN}📝 Repository size: ${total_size} objects (${deltas} deltas)${NC}\n"
+    fi
+done
+
+end_time=$(date +%s)
+duration=$((end_time - start_time))
+printf "\n${BOLD}✨ Downloaded successfully!${NC}\n"
+printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+printf "${BOLD}📊 Statistics:${NC}\n"
+printf "   ⏱️  Time taken: %02d:%02d\n" $((duration/60)) $((duration%60))
+printf "   📦 Objects processed: %d\n" $total_objects
+printf "   🚀 Average speed: %d objects/sec\n" $((total_objects / (duration + 1)))
+printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+EOF
+
+chmod +x ~/.git-clone-progress.sh
+git config --global alias.clone-fancy '!git clone "$1" --progress 2>&1 | ~/.git-clone-progress.sh #'
+
+cat > ~/.git-pull-progress.sh << 'EOF'
+#!/bin/bash
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+RED='\033[0;31m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+function progress_bar() {
+    local width=50
+    local percentage=$1
+    local filled=$(printf "%.0f" $(echo "$percentage * $width / 100" | bc -l))
+    local empty=$((width - filled))
+    
+    printf "${BOLD}["
+    printf "%${filled}s" | tr ' ' '='
+    printf ">"
+    printf "%${empty}s" | tr ' ' ' '
+    printf "] ${percentage}%%${NC}"
+}
+
+start_time=$(date +%s)
+total_objects=0
+received_objects=0
+resolved_deltas=0
+last_percentage=0
+files_changed=0
+insertions=0
+deletions=0
+branch_name=""
+is_up_to_date=false
+while IFS= read -r line; do
+    printf "\r\033[K"
+    
+    if [[ $line =~ "Already up to date." ]]; then
+        is_up_to_date=true
+        printf "${GREEN}✨ Repository is already up to date!${NC}\n"
+        
+    elif [[ $line =~ "remote: Enumerating objects: "([0-9]+) ]]; then
+        total_objects=${BASH_REMATCH[1]}
+        printf "${CYAN}🔍 Checking remote changes...${NC}\n"
+    
+    elif [[ $line =~ "From " ]]; then
+        printf "${MAGENTA}🌐 Connected to remote repository${NC}\n"
+    
+    elif [[ $line =~ "Updating "([a-f0-9]+)\.\.([a-f0-9]+) ]]; then
+        printf "${YELLOW}📥 Pulling changes from ${BOLD}${branch_name}${NC}\n"
+    
+    elif [[ $line =~ "Receiving objects: "([0-9]+)"%" ]]; then
+        percentage=${BASH_REMATCH[1]}
+        received_objects=$((total_objects * percentage / 100))
+        
+        if [ "$percentage" != "$last_percentage" ]; then
+            printf "\r${BLUE}📦 Downloading updates: "
+            progress_bar $percentage
+            printf " (${received_objects}/${total_objects})${NC}"
+            last_percentage=$percentage
+        fi
+    
+    elif [[ $line =~ "Resolving deltas: "([0-9]+)"%" ]]; then
+        percentage=${BASH_REMATCH[1]}
+        printf "\r${YELLOW}⚡ Resolving deltas: "
+        progress_bar $percentage
+        printf "${NC}"
+    
+    elif [[ $line =~ "Fast-forward" ]]; then
+        printf "\n${GREEN}🚀 Fast-forwarding to latest changes...${NC}\n"
+    
+    elif [[ $line =~ "files? changed," ]]; then
+        [[ $line =~ ([0-9]+)" file"? ]] && files_changed=${BASH_REMATCH[1]}
+        [[ $line =~ ([0-9]+)" insertion"? ]] && insertions=${BASH_REMATCH[1]}
+        [[ $line =~ ([0-9]+)" deletion"? ]] && deletions=${BASH_REMATCH[1]}
+    
+    elif [[ $line =~ "current branch "([^[:space:]]+) ]]; then
+        branch_name=${BASH_REMATCH[1]}
+    fi
+done
+
+end_time=$(date +%s)
+duration=$((end_time - start_time))
+if [ "$is_up_to_date" = false ]; then
+    printf "\n${BOLD}✨ Updated successfully!${NC}\n"
+    printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf "${BOLD}📊 Statistics:${NC}\n"
+    printf "   ⏱️  Time taken: %02d:%02d\n" $((duration/60)) $((duration%60))
+    printf "   📂 Files changed: %d\n" $files_changed
+    printf "   ✍️  Changes: +%d -%d\n" $insertions $deletions
+    if [ $total_objects -gt 0 ]; then
+        printf "   📦 Objects processed: %d\n" $total_objects
+        printf "   🚀 Average speed: %d objects/sec\n" $((total_objects / (duration + 1)))
+    fi
+    printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+fi
+EOF
+
+chmod +x ~/.git-pull-progress.sh
+git config --global alias.pull-fancy '!git pull "$@" --progress 2>&1 | ~/.git-pull-progress.sh #'
+}
+
 check_dependencies() {
     local missing=()
     for cmd in git curl jq tar; do
@@ -39,6 +233,7 @@ print_error() { echo -e "${RED}✗ $1${NC}" >&2; }
 print_info() { echo -e "${BLUE}ℹ  $1${NC}"; }
 print_warning() { echo -e "${YELLOW}⚠  $1${NC}"; }
 
+# not in use currently
 show_spinner() {
     local pid=$1
     local message=$2
@@ -54,62 +249,64 @@ show_spinner() {
 }
 
 progress_git_clone() {
+    initgit;
     local repo="$1"
     local branch="$2"
     local dir="$3"
-    local progress_file=$(mktemp)
-    
-    (GIT_PROGRESS_FILE="$progress_file" git clone --progress --branch "$branch" --single-branch "$repo" "$dir" 2>&1 | tee "$progress_file") &
-    local pid=$!
-    
-    local total_objects=0
-    local received_objects=0
-    local resolving_deltas=0
-    
-    while kill -0 $pid 2>/dev/null; do
-        if [[ -f "$progress_file" ]]; then
-            while IFS= read -r line; do
-                if [[ $line =~ Counting\ objects:\ ([0-9]+) ]]; then
-                    total_objects="${BASH_REMATCH[1]}"
-                elif [[ $line =~ Receiving\ objects:\ +([0-9]+)% ]]; then
-                    received_objects="${BASH_REMATCH[1]}"
-                    printf "\rDownloading: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((received_objects/2))))" "$received_objects"
-                elif [[ $line =~ Resolving\ deltas:\ +([0-9]+)% ]]; then
-                    resolving_deltas="${BASH_REMATCH[1]}"
-                    printf "\rInstalling: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((resolving_deltas/2))))" "$resolving_deltas"
-                fi
-            done < "$progress_file"
-        fi
-        sleep 0.1
-    done
-    
-    wait $pid
-    rm -f "$progress_file"
+    git clone --progress --branch "$branch" --single-branch "$repo" "$dir" 2>&1 | ~/.git-clone-progress.sh
     echo
 }
 
 extract_progress() {
     local archive="$1"
     local destination="$2"
-    local total_files=$(tar tzf "$archive" 2>/dev/null | wc -l)
-    local current_file=0
-    local progress_file=$(mktemp)
+
+    local GREEN='\033[0;32m'
+    local BLUE='\033[0;34m'
+    local YELLOW='\033[0;33m'
+    local CYAN='\033[0;36m'
+    local BOLD='\033[1m'
+    local NC='\033[0m'
+
+    printf "${CYAN}📊 Analyzing archive...${NC}\n"
     
-    (tar xzf "$archive" -C "$destination" --checkpoint=1 --checkpoint-action=exec='echo $TAR_CHECKPOINT > "'$progress_file'"' 2>/dev/null) &
+    local total_files=$(tar -tzf "$archive" | grep -v '/$' | wc -l)
+    local total_size=$(stat -c %s "$archive")
+    local total_size_mb=$(printf "%.2f" $(echo "scale=2; $total_size/1048576" | bc))
+
+    printf "${YELLOW}📂 Total files: ${BOLD}${total_files}${NC}\n"
+    printf "${YELLOW}💾 Size: ${BOLD}${total_size_mb}MB${NC}\n\n"
+
+    local temp_dir=$(mktemp -d)
+    local start_time=$(date +%s)
+    (tar xzf "$archive" -C "$destination" --checkpoint=1 \
+        --checkpoint-action=exec="echo \$TAR_CHECKPOINT > '${temp_dir}/progress'" 2>/dev/null) &
+    
     local pid=$!
     
     while kill -0 $pid 2>/dev/null; do
-        if [[ -f "$progress_file" ]]; then
-            current_file=$(cat "$progress_file")
-            local percentage=$((current_file * 100 / total_files))
-            printf "\rExtracting: [%-50s] %d%%" "$(printf '#%.0s' $(seq 1 $((percentage/2))))" "$percentage"
-        fi
         sleep 0.1
     done
+
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
     
-    wait $pid
-    rm -f "$progress_file"
-    echo
+    printf "\n${BOLD}✨ Extraction completed successfully!${NC}\n"
+    rm -rf "$temp_dir"
+
+    if (( duration > 0 )); then
+        local files_per_sec=$(printf "%.1f" $(echo "scale=1; $total_files/$duration" | bc))
+    else
+        local files_per_sec=0
+    fi
+    
+    printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+    printf "${BOLD}📊 Statistics:${NC}\n"
+    printf "   ⏱️  Time taken: %02d:%02d\n" $((duration/60)) $((duration%60))
+    printf "   📂 Files extracted: %d\n" $total_files
+    printf "   💾 Total size: %.2fMB\n" $total_size_mb
+    printf "   🚀 Average speed: %s files/sec\n" $files_per_sec
+    printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 }
 
 show_progress() {
@@ -347,6 +544,7 @@ initrepo() {
 }
 
 update() {
+    initgit;
     print_info "Updating package repositories..."
     local count=0
     local total=$(jq -r '.repos | length' "${UNI_CONFIG}")
@@ -360,8 +558,9 @@ update() {
         repo_name=$(basename "$repo")
         ((count += 1))
         print_info "[$count/$total] Updating $repo_name"
-        cd "$repo" && git pull --quiet
-        show_progress $count $total $repo_name
+        cd "$repo"
+	
+	git pull | ~/.git-pull-progress.sh
     done
     echo
     print_success "All repositories updated successfully"
@@ -467,7 +666,7 @@ ${BOLD}EXAMPLES:${NC}
     uni -U                      Check and upgrade packages
     uni -l                      List installed packages
 
-For more information, visit: ${BLUE}https://github.com/neoapps-dev/uni${NC}
+For more information, visit: ${BLUE}https://neoapps.gitbook.io/uni${NC}
 " | more
 }
 
@@ -492,13 +691,13 @@ case "$1" in
         howtoaddtopath
         ;;
     "update"|"--update"|"-u")
-        update
+        update | more
         ;;
     "upgrade"|"--upgrade"|"-U")
-        upgrade
+        upgrade | more
         ;;
     "list"|"--list"|"-l")
-        list
+        list | more
         ;;
     "help"|"--help"|"-h"|"")
         show_help
