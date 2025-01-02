@@ -72,8 +72,6 @@ while IFS= read -r line; do
     elif [[ $line =~ Receiving\ objects:\ +([0-9]+)% ]]; then
         percentage=${BASH_REMATCH[1]}
         received_objects=$((total_objects * percentage / 100))
-        
-        # Only update if percentage changed
         if [ "$percentage" != "$last_percentage" ]; then
             printf "\r${BLUE}📦 Downloading objects: "
             progress_bar $percentage
@@ -99,7 +97,7 @@ done
 
 end_time=$(date +%s)
 duration=$((end_time - start_time))
-printf "\n${BOLD}✨ Downloaded successfully!${NC}\n"
+printf "\n${BOLD}✨ Downloaded!${NC}\n"
 printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 printf "${BOLD}📊 Statistics:${NC}\n"
 printf "   ⏱️  Time taken: %02d:%02d\n" $((duration/60)) $((duration%60))
@@ -196,7 +194,7 @@ done
 end_time=$(date +%s)
 duration=$((end_time - start_time))
 if [ "$is_up_to_date" = false ]; then
-    printf "\n${BOLD}✨ Updated successfully!${NC}\n"
+    printf "\n${BOLD}✨ Updated!${NC}\n"
     printf "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
     printf "${BOLD}📊 Statistics:${NC}\n"
     printf "   ⏱️  Time taken: %02d:%02d\n" $((duration/60)) $((duration%60))
@@ -253,7 +251,7 @@ progress_git_clone() {
     local repo="$1"
     local branch="$2"
     local dir="$3"
-    git clone --progress --branch "$branch" --single-branch "$repo" "$dir" 2>&1 | ~/.git-clone-progress.sh
+    git clone --progress --branch "$branch" --single-branch "$repo" "$dir"  | ~/.git-clone-progress.sh
     if [[ $? -eq 0 ]]; then
       print_error "Error Downloading Repository.";
       exit 1
