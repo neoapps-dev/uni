@@ -252,10 +252,6 @@ progress_git_clone() {
     local branch="$2"
     local dir="$3"
     git clone --progress --branch "$branch" --single-branch "$repo" "$dir" 2>&1 | ~/.git-clone-progress.sh
-    if [[ $? -eq 0 ]]; then
-      print_error "Error Downloading Repository.";
-      exit 1
-    fi
     echo
 }
 
@@ -283,7 +279,6 @@ extract_progress() {
     local start_time=$(date +%s)
     (tar xzf "$archive" -C "$destination" --checkpoint=1 \
         --checkpoint-action=exec="echo \$TAR_CHECKPOINT > '${temp_dir}/progress'" 2>/dev/null) &
-    
     local pid=$!
     
     while kill -0 $pid 2>/dev/null; do
@@ -391,7 +386,7 @@ install() {
                 version="$requested_version"
             fi
             
-            print_info "Installing ${BOLD}${package_name}${NC} version ${BOLD}${version}${NC} by ${maintainer}"
+            print_info "Installing ${BOLD}${package_name}${NC} version ${BOLD}${version}${NC} maintained by ${maintainer}"
             
             install_dependencies "$metadata"
             
@@ -406,7 +401,7 @@ install() {
             fi
             
             if [ ! -f "package.uni" ]; then
-                print_error "package.uni not found in repository"
+                print_error "package.uni not found in repository."
                 rm -rf "$temp_dir"
                 exit 1
             fi
@@ -491,13 +486,15 @@ search() {
                     maintainer=$(jq -r '.maintainer // "unknown"' "$pkg")
                     description=$(jq -r '.description // "No description"' "$pkg")
                     tags_display="${tags:0:20}"
+		    description="${description:0:30}"
                     [ ${#tags} -gt 20 ] && tags_display="${tags_display}..."
-                    
+                    [ ${description} -gt 30] && description="${description}..."
+
                     printf "%-20s %-10s %-20s %-30s %-20s\n" \
                         "$name" \
                         "$version" \
                         "$maintainer" \
-                        "${description:0:30}" \
+                        "${description}" \
                         "$tags_display"
                 fi
             fi
@@ -511,6 +508,7 @@ search() {
 }
 
 add_repo() {
+    initgit;
     if [ -z "$1" ]; then
         print_error "Usage: uni add-repo <repository-url>"
         exit 1
@@ -523,11 +521,11 @@ add_repo() {
     
     if [ -d "${UNI_REPOS}/${repo_name}" ]; then
         print_info "Repository exists, updating..."
-        (cd "${UNI_REPOS}/${repo_name}" && git pull --quiet)
+        (cd "${UNI_REPOS}/${repo_name}" && git pull | ~/.git-pull-progress.sh)
     else
         print_info "Downloading repository..."
         temp_dir=$(mktemp -d)
-        git clone --quiet "$repo_url" "$temp_dir"
+        git clone --progress "$repo_url" "$temp_dir" | ~/.git-clone-progress.sh
         sudo mv "$temp_dir" "${UNI_REPOS}/${repo_name}"
     fi
     
@@ -561,7 +559,6 @@ update() {
         ((count += 1))
         print_info "[$count/$total] Updating $repo_name"
         cd "$repo"
-	
 	git pull | ~/.git-pull-progress.sh
     done
     echo
