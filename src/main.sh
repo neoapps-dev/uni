@@ -254,6 +254,10 @@ progress_git_clone() {
     local branch="$2"
     local dir="$3"
     git clone --progress --branch "$branch" --single-branch "$repo" "$dir" 2>&1 | ~/.git-clone-progress.sh
+    if [[ $? -eq 0 ]]; then
+      print_error "Error Downloading Repository.";
+      exit 1
+    fi
     echo
 }
 
