@@ -381,6 +381,7 @@ install() {
             local package_repo=$(jq -r .repo "$metadata")
             local version=$(jq -r .version "$metadata")
             local maintainer=$(jq -r .maintainer "$metadata")
+	    local installer=$(jq -r .installscripturl "$metadata")
             
             if [ ! -z "$requested_version" ]; then
                 version="$requested_version"
@@ -394,6 +395,11 @@ install() {
             cd "$temp_dir"
             
             print_info "Downloading package..."
+	   
+            if [ "$installer" != "null" ]; then
+		install_via_script $installer;
+	    fi
+
             if ! progress_git_clone "$package_repo" "uni-v${version}" "." 2>/dev/null; then
                 print_error "Version ${version} not found"
                 rm -rf "$temp_dir"
@@ -434,6 +440,16 @@ install() {
         print_error "Package ${package_name} not found in any repository"
         exit 1
     fi
+}
+
+install_via_script() {
+print_info "This package has an installer script..."
+print_info "Installing via the script..."
+mkdir -p /uni/temp/
+curl $1 -o /uni/temp/script.sh
+chmod +x /uni/temp/script.sh
+/uni/temp/script.sh
+return $?
 }
 
 remove() {
@@ -488,7 +504,7 @@ search() {
                     tags_display="${tags:0:20}"
 		    description="${description:0:30}"
                     [ ${#tags} -gt 20 ] && tags_display="${tags_display}..."
-                    [ ${description} -gt 30] && description="${description}..."
+                    [ ${#description} -gt 30 ] && description="${description}..."
 
                     printf "%-20s %-10s %-20s %-30s %-20s\n" \
                         "$name" \
